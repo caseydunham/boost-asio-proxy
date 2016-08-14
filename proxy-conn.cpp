@@ -1,18 +1,88 @@
 /**
  * @file   proxy-conn.cpp
  * @author Alex Ott <alexott@gmail.com>
- * 
- * @brief  
- * 
- * 
+ *
+ * @brief
+ *
+ *
  */
 
 #include "proxy-conn.hpp"
 
-/** 
- * 
- * 
- * @param io_service 
+// std::string version of answer here http://stackoverflow.com/a/11044337/147373
+// converted to std::string to play nice with the rest of the boost proxy example
+struct Uri
+{
+	public:
+		std::string QueryString, Path, Protocol, Host, Port;
+
+	static Uri Parse(const std::string &uri)
+	{
+	    Uri result;
+
+	    typedef std::string::const_iterator iterator_t;
+
+	    if (uri.length() == 0)
+	        return result;
+
+	    iterator_t uriEnd = uri.end();
+
+	    // get query start
+	    iterator_t queryStart = std::find(uri.begin(), uriEnd, '?');
+
+	    // protocol
+	    iterator_t protocolStart = uri.begin();
+	    iterator_t protocolEnd = std::find(protocolStart, uriEnd, ':');            //"://");
+
+	    if (protocolEnd != uriEnd)
+	    {
+	        std::string prot = &*(protocolEnd);
+	        if ((prot.length() > 3) && (prot.substr(0, 3) == "://"))
+	        {
+	            result.Protocol = std::string(protocolStart, protocolEnd);
+	            protocolEnd += 3;   //      ://
+	        }
+	        else
+	            protocolEnd = uri.begin();  // no protocol
+	    }
+	    else
+	        protocolEnd = uri.begin();  // no protocol
+
+	    // host
+	    iterator_t hostStart = protocolEnd;
+	    iterator_t pathStart = std::find(hostStart, uriEnd, '/');  // get pathStart
+
+	    iterator_t hostEnd = std::find(protocolEnd,
+	        (pathStart != uriEnd) ? pathStart : queryStart,
+	        L':');  // check for port
+
+	    result.Host = std::string(hostStart, hostEnd);
+
+	    // port
+	    if ((hostEnd != uriEnd) && ((&*(hostEnd))[0] == ':'))  // we have a port
+	    {
+	        hostEnd++;
+	        iterator_t portEnd = (pathStart != uriEnd) ? pathStart : queryStart;
+	        result.Port = std::string(hostEnd, portEnd);
+	    }
+
+	    // path
+	    if (pathStart != uriEnd)
+	        result.Path = std::string(pathStart, queryStart);
+
+	    // query
+	    if (queryStart != uriEnd)
+	        result.QueryString = std::string(queryStart, uri.end());
+
+	    return result;
+
+  }   // Parse
+};  // uri
+
+/**
+ *
+ *
+ * @param io_service
  */
 connection::connection(ba::io_service& io_service) : io_service_(io_service),
 													 bsocket_(io_service),
@@ -20,29 +90,29 @@ connection::connection(ba::io_service& io_service) : io_service_(io_service),
 													 resolver_(io_service),
 													 proxy_closed(false),
 													 isPersistent(false),
-													 isOpened(false) 
+													 isOpened(false)
 {
 	fHeaders.reserve(8192);
 }
 
-/** 
+/**
  * Start read data of request from browser
- * 
+ *
  */
 void connection::start() {
 //  	std::cout << "start" << std::endl;
 	fHeaders.clear();
 	reqHeaders.clear();
 	respHeaders.clear();
-	
+
 	handle_browser_read_headers(bs::error_code(), 0);
 }
 
-/** 
+/**
  * Read header of HTTP request from browser
- * 
- * @param err 
- * @param len 
+ *
+ * @param err
+ * @param len
  */
 void connection::handle_browser_read_headers(const bs::error_code& err, size_t len) {
 //  	std::cout << "handle_browser_read_headers. Error: " << err << ", len=" << len << std::endl;
@@ -68,7 +138,7 @@ void connection::handle_browser_read_headers(const bs::error_code& err, size_t l
 				std::cout << "Bad first line: " << reqString << std::endl;
 				return;
 			}
-			
+
 			fMethod=reqString.substr(0,idx);
 			reqString=reqString.substr(idx+1);
 			idx=reqString.find(" ");
@@ -84,7 +154,7 @@ void connection::handle_browser_read_headers(const bs::error_code& err, size_t l
 				return;
 			}
 			fReqVersion=fReqVersion.substr(idx+1);
-			
+
 			// string outputs to console completely, even when using multithreading
 			//std::cout << std::string("\n fMethod: " + fMethod + ", fURL: " + fURL + ", fReqVersion: " + fReqVersion + "\n");
 			// analyze headers, etc
@@ -97,29 +167,24 @@ void connection::handle_browser_read_headers(const bs::error_code& err, size_t l
 	}
 }
 
-/** 
+/**
  * Start connecting to the web-server, initially to resolve the DNS-name of web-server into the IP address
- * 
+ *
  */
 void connection::start_connect() {
 	std::string server="";
 	std::string port="80";
-	boost::regex rHTTP("http://(.*?)(:(\\d+))?(/.*)");
-	boost::smatch m;
-	
-	if(boost::regex_search(fURL, m, rHTTP, boost::match_extra)) {
-		server=m[1].str();
-		if(m[2].str() != "") {
-			port=m[3].str();
-		}
-		fNewURL=m[4].str();
+
+	Uri uri = Uri::Parse(fURL);
+	server = uri.Host;
+	if (uri.Port != "") {
+			port = uri.Port;
 	}
-	if(server.empty()) {
-		std::cout << "Can't parse URL "<< std::endl;
-		return;
-	}
-//	std::cout << server << " " << port << " " << fNewURL << std::endl;
-	
+
+	fNewURL = uri.Path + uri.QueryString;
+
+	//std::cout << server << " " << port << " " << fNewURL << std::endl;
+
 	if(!isOpened || server != fServer || port != fPort) {
 		fServer=server;
 		fPort=port;
@@ -133,11 +198,11 @@ void connection::start_connect() {
 	}
 }
 
-/** 
+/**
  * If successful, after the resolved DNS-names of web-server into the IP addresses, try to connect
- * 
- * @param err 
- * @param endpoint_iterator 
+ *
+ * @param err
+ * @param endpoint_iterator
  */
 void connection::handle_resolve(const boost::system::error_code& err,
 								ba::ip::tcp::resolver::iterator endpoint_iterator) {
@@ -150,11 +215,11 @@ void connection::handle_resolve(const boost::system::error_code& err,
 	}
 }
 
-/** 
+/**
  * Try to connect to the web-server
- * 
- * @param err 
- * @param endpoint_iterator 
+ *
+ * @param err
+ * @param endpoint_iterator
  */
 void connection::handle_connect(const boost::system::error_code& err,
 								ba::ip::tcp::resolver::iterator endpoint_iterator, const bool first_time) {
@@ -174,9 +239,9 @@ void connection::handle_connect(const boost::system::error_code& err,
 	}
 }
 
-/** 
+/**
  * Write data to the web-server
- * 
+ *
  */
 void connection::start_write_to_server() {
 	fReq=fMethod;
@@ -196,11 +261,11 @@ void connection::start_write_to_server() {
 	fHeaders.clear();
 }
 
-/** 
+/**
  * If successful, read the header that came from a web server
- * 
- * @param err 
- * @param len 
+ *
+ * @param err
+ * @param len
  */
 void connection::handle_server_write(const bs::error_code& err, size_t len) {
 // 	std::cout << "handle_server_write. Error: " << err << ", len=" << len << std::endl;
@@ -211,11 +276,11 @@ void connection::handle_server_write(const bs::error_code& err, size_t len) {
 	}
 }
 
-/** 
+/**
  * Read header of data returned from the web-server
- * 
- * @param err 
- * @param len 
+ *
+ * @param err
+ * @param len
  */
 void connection::handle_server_read_headers(const bs::error_code& err, size_t len) {
 // 	std::cout << "handle_server_read_headers. Error: " << err << ", len=" << len << std::endl;
@@ -242,7 +307,7 @@ void connection::handle_server_read_headers(const bs::error_code& err, size_t le
 			std::string reqConnString="",respConnString="";
 
 			std::string respVersion=respString.substr(respString.find("HTTP/")+5,3);
-			
+
 			headersMap::iterator it=respHeaders.find("Content-Length");
 			if(it != respHeaders.end())
 				RespLen=boost::lexical_cast<int>(it->second);
@@ -252,7 +317,7 @@ void connection::handle_server_read_headers(const bs::error_code& err, size_t le
 			it=reqHeaders.find("Connection");
 			if(it != reqHeaders.end())
 				reqConnString=it->second;
-			
+
 			isPersistent=(
 				((fReqVersion == "1.1" && reqConnString != "close") ||
 				 (fReqVersion == "1.0" && reqConnString == "keep-alive")) &&
@@ -261,7 +326,7 @@ void connection::handle_server_read_headers(const bs::error_code& err, size_t le
 				RespLen != -1);
 // 			std::cout << "RespLen: " << RespLen << " RespReaded: " << RespReaded
 // 					  << " isPersist: " << isPersistent << std::endl;
-			
+
 			// sent data
 			ba::async_write(bsocket_, ba::buffer(fHeaders),
 							boost::bind(&connection::handle_browser_write,
@@ -274,11 +339,11 @@ void connection::handle_server_read_headers(const bs::error_code& err, size_t le
 	}
 }
 
-/** 
+/**
  * Writing data to the browser, are recieved from web-server
- * 
- * @param err 
- * @param len 
+ *
+ * @param err
+ * @param len
  */
 void connection::handle_browser_write(const bs::error_code& err, size_t len) {
 //   	std::cout << "handle_browser_write. Error: " << err << " " << err.message()
@@ -302,11 +367,11 @@ void connection::handle_browser_write(const bs::error_code& err, size_t len) {
 	}
 }
 
-/** 
+/**
  * Reading data from a Web server, for the writing them to the browser
- * 
- * @param err 
- * @param len 
+ *
+ * @param err
+ * @param len
  */
 void connection::handle_server_read_body(const bs::error_code& err, size_t len) {
 //   	std::cout << "handle_server_read_body. Error: " << err << " " << err.message()
@@ -326,9 +391,9 @@ void connection::handle_server_read_body(const bs::error_code& err, size_t len) 
 	}
 }
 
-/** 
+/**
  * Close both sockets: for browser and web-server
- * 
+ *
  */
 void connection::shutdown() {
 	ssocket_.close();
@@ -350,7 +415,7 @@ void connection::parseHeaders(const std::string& h, headersMap& hm) {
 			std::cout << "Bad header line: " << t << std::endl;
 			break;
 		}
-// 		std::cout << "Name: " << t.substr(0,idx) 
+// 		std::cout << "Name: " << t.substr(0,idx)
 // 				  << " Value: " << t.substr(idx+2) << std::endl;
 		hm.insert(std::make_pair(t.substr(0,idx),t.substr(idx+2)));
 	}

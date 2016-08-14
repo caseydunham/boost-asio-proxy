@@ -1,10 +1,10 @@
 /**
  * @file   common.h
  * @author Alex Ott <alexott@gmail.com>
- * 
+ *
  * @brief  Declarations and includes, common for all boost::asio based programs
- * 
- * 
+ *
+ *
  */
 
 #ifndef _COMMON_H
@@ -24,6 +24,7 @@
 
 #include <iostream>
 #include <string>
+#include <algorithm>
 
 namespace ba=boost::asio;
 namespace bs=boost::system;
@@ -32,4 +33,3 @@ typedef boost::shared_ptr<ba::ip::tcp::socket> socket_ptr;
 typedef boost::shared_ptr<ba::io_service> io_service_ptr;
 
 #endif /* _COMMON_H */
-
